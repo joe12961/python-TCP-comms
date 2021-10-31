@@ -2,6 +2,8 @@ import queue
 import threading
 import socket
 
+DONT_ECHO = True
+
 class Server:
     def _client_id_gen():
         i = 0
@@ -83,8 +85,12 @@ class Server:
         # but actually its okay to have some unnecessarily work done here    
         while self.is_running:
             # First remove any perclients that have closed
-            self.per_clients = list(filter(lambda per_client : per_client.personal_thread_running, self.per_clients))
-            
+            for per_client in self.per_clients:
+                if not per_client.personal_thread_running:
+                    print(f"{per_client}, with id {per_client.id} is no longer running, and has been pruned")
+                    self.per_clients.remove(per_client)
+
+            # Then, prescribe
             while not self.server_details.new_identities.empty():
                 new_identity = self.server_details.new_identities.get()
                 for per_client in self.per_clients:
@@ -92,7 +98,8 @@ class Server:
             while not self.server_details.new_messages.empty():
                 new_message = self.server_details.new_messages.get()
                 for per_client in self.per_clients:
-                    per_client.add_prescribed_send(f"message:{new_message[0]} {new_message[1]}\0") # Null terminated
+                    if per_client.id != new_message[0] or not DONT_ECHO:
+                        per_client.add_prescribed_send(f"message:{new_message[0]} {new_message[1]}\0") # Null terminated
             
             
     def start_all_immediately(self):
@@ -133,6 +140,7 @@ class PerClient:
     def threaded_sender(self):
         while self.all_threads_running.is_set() and self.personal_thread_running:
             current_action = self.prescribed_queue.get(block=True)
+            print(f"{self.id} <--- \t{current_action}")
             self.conn.sendall(current_action.encode()) #TODO expand this, and possibly make action not a string
         
     def threaded_listener(self):
@@ -157,7 +165,7 @@ class PerClient:
     def get_own_name(self):
         if self.id in self.server_details.persistent_identities.keys():
             return self.server_details.persistent_identities[self.id] 
-        return "erroneously unknown name"
+        return "no name"
 
     def add_prescribed_send(self, action: str):
         self.prescribed_queue.put(action)
